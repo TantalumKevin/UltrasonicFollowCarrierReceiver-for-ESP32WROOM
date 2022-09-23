@@ -1,0 +1,7 @@
+IQmath.lnk
+MDK-ARM/Receiver/
+new/
+MDK-ARM/Receiver/*.o
+build/
+.vscode/
+.devcontainer/

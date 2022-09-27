@@ -24,16 +24,15 @@
 #include "driver/uart.h"
 #include "string.h"
 
-
-static const char* TAG = "pdm_rec_example";
+static const char *TAG = "pdm_rec_example";
 static const int RX_BUF_SIZE = 1024;
 
-#define TXD_PIN (GPIO_NUM_34)
-#define RXD_PIN (GPIO_NUM_35)
-#define SAMPLE_SIZE         (16 * 1024)
-#define BYTE_RATE           (I2Sclk * (16 / 8)) * 2
+#define TXD_PIN 32
+#define RXD_PIN 33
+#define SAMPLE_SIZE (16 * 1024)
+#define BYTE_RATE (I2Sclk * (16 / 8)) * 2
 #define I2Schan 0
-#define I2Sclk  80*1000
+#define I2Sclk 160 * 1000
 
 static int16_t i2s_readraw_buff[SAMPLE_SIZE];
 size_t bytes_read;
@@ -52,12 +51,12 @@ void init_microphone(void)
         // 通道格式 - 左右声道
         .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
         //通信格式
-        .communication_format = I2S_COMM_FORMAT_PCM,
+        .communication_format = I2S_COMM_FORMAT_STAND_PCM_SHORT,
         //中断级别
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL2,
         //接收/传输数据的DMA缓冲区的总数
         .dma_buf_count = 8,
-        //DMA缓冲区中的帧长度
+        // DMA缓冲区中的帧长度
         .dma_buf_len = 512,
         // 是否使用APLL
         .use_apll = false,
@@ -73,9 +72,9 @@ void init_microphone(void)
     };
 
     // Call driver installation function before any I2S R/W operation.
-    ESP_ERROR_CHECK( i2s_driver_install(I2Schan, &i2s_config, 0, NULL) );
-    ESP_ERROR_CHECK( i2s_set_pin(I2Schan, &pin_config) );
-    ESP_ERROR_CHECK( i2s_set_clk(I2Schan, I2Sclk, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO) );
+    ESP_ERROR_CHECK(i2s_driver_install(I2Schan, &i2s_config, 0, NULL));
+    ESP_ERROR_CHECK(i2s_set_pin(I2Schan, &pin_config));
+    ESP_ERROR_CHECK(i2s_set_clk(I2Schan, I2Sclk, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO));
 }
 
 /*filter
@@ -91,7 +90,8 @@ void filter(void)
 }
 */
 
-void init_uart(void) {
+void init_uart(void)
+{
     const uart_config_t uart_config = {
         .baud_rate = 115200,
         .data_bits = UART_DATA_8_BITS,
@@ -106,28 +106,31 @@ void init_uart(void) {
     uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
-int sendData(const char* logName, const char* data)
+int sendData(const char *data)
 {
+    static const char *TX_TAG = "TX";
+    esp_log_level_set(TX_TAG, ESP_LOG_INFO);
     const int len = strlen(data);
     const int txBytes = uart_write_bytes(UART_NUM_1, data, len);
-    ESP_LOGI(logName, "Wrote %d bytes", txBytes);
+    //ESP_LOGI(TX_TAG, "Wrote %d bytes", txBytes);
     return txBytes;
 }
 
-static void rx_task(void *arg)
+void rxData(char *data)
 {
-    static const char *RX_TASK_TAG = "RX_TASK";
-    esp_log_level_set(RX_TASK_TAG, ESP_LOG_INFO);
-    uint8_t* data = (uint8_t*) malloc(RX_BUF_SIZE+1);
-    while (1) {
-        const int rxBytes = uart_read_bytes(UART_NUM_1, data, RX_BUF_SIZE, 1000 / portTICK_RATE_MS);
-        if (rxBytes > 0) {
+    static const char *RX_TAG = "RX";
+    esp_log_level_set(RX_TAG, ESP_LOG_INFO);
+
+    while (1)
+    {
+        const int rxBytes = uart_read_bytes(UART_NUM_1, data, RX_BUF_SIZE, 10 / portTICK_RATE_MS);
+        if (rxBytes > 0)
+        {
             data[rxBytes] = 0;
-            ESP_LOGI(RX_TASK_TAG, "Read %d bytes: '%s'", rxBytes, data);
-            ESP_LOG_BUFFER_HEXDUMP(RX_TASK_TAG, data, rxBytes, ESP_LOG_INFO);
+            //ESP_LOGI(RX_TAG, "Read %d bytes: '%s'", rxBytes, data);
+            break;
         }
     }
-    free(data);
 }
 
 void app_main(void)
@@ -135,13 +138,20 @@ void app_main(void)
     ESP_LOGI(TAG, "PDM microphone recording Example start");
     // Init the PDM digital microphone
     init_microphone();
+    init_uart();
+    char data[RX_BUF_SIZE];
     // Start Recording
     // Read the RAW samples from the microphone
+    ESP_LOGI(TAG, "CLK = %.1f kHz", i2s_get_clk(I2Schan)/1000);
     i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
-    ESP_LOGI(TAG, "%d",i2s_readraw_buff[0]);
-    while(1){
-    i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
+    ESP_LOGI(TAG, "%d", i2s_readraw_buff[0]);
+    while (1)
+    {
+        // i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
+        rxData(data);
+        //ESP_LOGI(TAG, "UART:%s", data);
+        sendData(data);
     }
     // Stop I2S driver and destroy
-    ESP_ERROR_CHECK( i2s_driver_uninstall(I2Schan) );
+    ESP_ERROR_CHECK(i2s_driver_uninstall(I2Schan));
 }

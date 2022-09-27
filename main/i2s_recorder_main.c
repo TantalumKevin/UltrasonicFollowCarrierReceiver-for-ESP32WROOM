@@ -19,25 +19,29 @@
 #include "freertos/task.h"
 #include "driver/i2s.h"
 #include "driver/gpio.h"
+#include "driver/uart.h"
+#include "driver/rmt.h"
+#include "led_strip.h"
 #include "sdmmc_cmd.h"
 #include "sdkconfig.h"
-#include "driver/uart.h"
-#include "string.h"
 
-static const char *TAG = "pdm_rec_example";
-static const int RX_BUF_SIZE = 1024;
-
-#define TXD_PIN 32
-#define RXD_PIN 33
+#define I2S_CLK  4
+#define I2S_DTA  5
+#define RMT_TX  12
+#define UART_TX 32
+#define UART_RX 33
 #define SAMPLE_SIZE (16 * 1024)
 #define BYTE_RATE (I2Sclk * (16 / 8)) * 2
 #define I2Schan 0
 #define I2Sclk 160 * 1000
+#define RMT_TIMEOUT 10
 
+static const char *TAG = "UltraSonicFollowReceiver-ESP32";
+static const int RX_BUF_SIZE = 1024;
 static int16_t i2s_readraw_buff[SAMPLE_SIZE];
 size_t bytes_read;
 
-void init_microphone(void)
+void init_i2s(void)
 {
     // Set the I2S configuration as PDM and 16bits per sample
     // 设置I2S为PDM模式并设置每次采样16位
@@ -103,7 +107,7 @@ void init_uart(void)
     // We won't use a buffer for sending data.
     uart_driver_install(UART_NUM_1, RX_BUF_SIZE * 2, 0, 0, NULL, 0);
     uart_param_config(UART_NUM_1, &uart_config);
-    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_set_pin(UART_NUM_1, UART_TX, UART_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
 int sendData(const char *data)
@@ -112,7 +116,7 @@ int sendData(const char *data)
     esp_log_level_set(TX_TAG, ESP_LOG_INFO);
     const int len = strlen(data);
     const int txBytes = uart_write_bytes(UART_NUM_1, data, len);
-    //ESP_LOGI(TX_TAG, "Wrote %d bytes", txBytes);
+    ESP_LOGI(TX_TAG, "Wrote %d bytes", txBytes);
     return txBytes;
 }
 
@@ -127,30 +131,74 @@ void rxData(char *data)
         if (rxBytes > 0)
         {
             data[rxBytes] = 0;
-            //ESP_LOGI(RX_TAG, "Read %d bytes: '%s'", rxBytes, data);
+            ESP_LOGI(RX_TAG, "Read %d bytes: '%s'", rxBytes, data);
             break;
         }
     }
 }
 
+void set_color(led_strip_t *strip,uint8_t *color)
+{
+    ESP_ERROR_CHECK(strip->set_pixel(strip, 0, (uint32_t) color[0], (uint32_t) color[1], (uint32_t) color[2]));
+    ESP_ERROR_CHECK(strip->refresh(strip, RMT_TIMEOUT));
+}
+
+void clear_color(led_strip_t *strip)
+{
+    ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "PDM microphone recording Example start");
-    // Init the PDM digital microphone
-    init_microphone();
+    // Init
+    init_i2s();
     init_uart();
-    char data[RX_BUF_SIZE];
+
+    // init rmt
+    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(RMT_TX, RMT_CHANNEL_0);
+    // set counter clock to 40MHz
+    config.clk_div = 2;
+    ESP_ERROR_CHECK(rmt_config(&config));
+    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
+    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(1, (led_strip_dev_t)config.channel);
+    led_strip_t *strip = led_strip_new_rmt_ws2812(&strip_config);
+    if (!strip) {
+        ESP_LOGE(TAG, "install WS2812 driver failed");
+    }
+    // Clear LED strip (turn off all LEDs)
+    ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
+    // Show simple rainbow chasing pattern
+    ESP_LOGI(TAG, "LED Rainbow Chase Start");
+
+    
+    //char data[RX_BUF_SIZE];
+    uint8_t color[3][3] ={
+        { 255,   0, 0},//RED
+        { 255, 255, 0},//YELLOW
+        {   0, 255, 0}//GREEN
+        };
+    
     // Start Recording
     // Read the RAW samples from the microphone
     ESP_LOGI(TAG, "CLK = %.1f kHz", i2s_get_clk(I2Schan)/1000);
     i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
     ESP_LOGI(TAG, "%d", i2s_readraw_buff[0]);
+    set_color(strip,color[1]);
+    vTaskDelay(1000/portTICK_RATE_MS);
+    clear_color(strip);
+    vTaskDelay(1000/portTICK_RATE_MS);
     while (1)
     {
         // i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
-        rxData(data);
-        //ESP_LOGI(TAG, "UART:%s", data);
-        sendData(data);
+        //rxData(data);
+        //sendData(data);
+        for(int i = 0 ; i< 3;i++)
+        {
+        set_color(strip,color[i]);
+        vTaskDelay(100/portTICK_RATE_MS);
+        }
+
     }
     // Stop I2S driver and destroy
     ESP_ERROR_CHECK(i2s_driver_uninstall(I2Schan));

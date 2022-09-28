@@ -194,7 +194,7 @@ void app_main(void)
         // i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
         //rxData(data);
         //sendData(data);
-
+        
     }
     // Stop I2S driver and destroy
     ESP_ERROR_CHECK(i2s_driver_uninstall(I2Schan));

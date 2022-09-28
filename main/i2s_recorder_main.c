@@ -35,6 +35,9 @@
 #define I2Schan 0
 #define I2Sclk 160 * 1000
 #define RMT_TIMEOUT 10
+#define RED color[0]
+#define YELLOW color[1]
+#define GREEN color[2]
 
 static const char *TAG = "UltraSonicFollowReceiver-ESP32";
 static const int RX_BUF_SIZE = 1024;
@@ -184,20 +187,13 @@ void app_main(void)
     ESP_LOGI(TAG, "CLK = %.1f kHz", i2s_get_clk(I2Schan)/1000);
     i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
     ESP_LOGI(TAG, "%d", i2s_readraw_buff[0]);
-    set_color(strip,color[1]);
-    vTaskDelay(1000/portTICK_RATE_MS);
-    clear_color(strip);
-    vTaskDelay(1000/portTICK_RATE_MS);
+    set_color(strip,RED);
+    // vTaskDelay(100/portTICK_RATE_MS);
     while (1)
     {
         // i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
         //rxData(data);
         //sendData(data);
-        for(int i = 0 ; i< 3;i++)
-        {
-        set_color(strip,color[i]);
-        vTaskDelay(100/portTICK_RATE_MS);
-        }
 
     }
     // Stop I2S driver and destroy

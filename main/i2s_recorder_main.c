@@ -8,6 +8,7 @@
 */
 #include <stdio.h>
 #include <string.h>
+#include <memory.h>
 #include <math.h>
 #include <sys/unistd.h>
 #include <sys/stat.h>
@@ -33,18 +34,27 @@
 #define SAMPLE_SIZE (16 * 1024)
 #define BYTE_RATE (I2Sclk * (16 / 8)) * 2
 #define I2Schan 0
-#define I2Sclk 160 * 1000
+#define I2Sclk 50*1000//160 * 1000
+#define I2Smode I2S_CHANNEL_MONO//I2S_CHANNEL_STEREO
 #define RMT_TIMEOUT 10
 #define RED color[0]
 #define YELLOW color[1]
 #define GREEN color[2]
+#define SDU color[3]
 
 static const char *TAG = "UltraSonicFollowReceiver-ESP32";
 static const int RX_BUF_SIZE = 1024;
 static int16_t i2s_readraw_buff[SAMPLE_SIZE];
+static led_strip_t *strip;
 size_t bytes_read;
+uint8_t color[4][3] ={
+    { 255,   0,  0},//RED
+    { 255, 255,  0},//YELLOW
+    {   0, 255,  0},//GREEN
+    { 156,  12, 19}//SDU-RED
+    };
 
-void init_i2s(void)
+void init_i2s()
 {
     // Set the I2S configuration as PDM and 16bits per sample
     // 设置I2S为PDM模式并设置每次采样16位
@@ -52,13 +62,13 @@ void init_i2s(void)
         // 工作模式 - 主机、接收、PDM
         .mode = I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM,
         // 采样率 - 160kHz
-        .sample_rate = I2Sclk,
+        .sample_rate = 20*1000,
         // 采样深度
         .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
         // 通道格式 - 左右声道
         .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
         //通信格式
-        .communication_format = I2S_COMM_FORMAT_STAND_PCM_SHORT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         //中断级别
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL2,
         //接收/传输数据的DMA缓冲区的总数
@@ -81,26 +91,22 @@ void init_i2s(void)
     // Call driver installation function before any I2S R/W operation.
     ESP_ERROR_CHECK(i2s_driver_install(I2Schan, &i2s_config, 0, NULL));
     ESP_ERROR_CHECK(i2s_set_pin(I2Schan, &pin_config));
-    ESP_ERROR_CHECK(i2s_set_clk(I2Schan, I2Sclk, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO));
-}
+    ESP_ERROR_CHECK(i2s_set_clk(I2Schan, 20*1000, I2S_BITS_PER_SAMPLE_16BIT, I2Smode));
 
-/*filter
-void filter(void)
-{
-    float a[15]={1.0000, 0.4770, 1.8441, 0.7249, 1.4256, 0.4546, 0.5995, 0.1505, 0.1482, 0.0278, 0.0215, 0.0027, 0.0017, 0.0001, 0.0001 };
-    for(uint i = 14; i < 10000 ; i++)
-    {
-        yf[i] = 0.0000001518 * signal[ i-7 ];
-        for(uint j = 1; j < 15 ; j++)
-            yf[i] = yf[i] - a[j] * yf[ i+1-j ];
-    }
+    ESP_LOGI(TAG, "CLK = %.1f kHz", i2s_get_clk(I2Schan)/1000);
+    vTaskDelay(1000/portTICK_RATE_MS);
+    ESP_ERROR_CHECK(i2s_set_sample_rates(I2Schan,I2Sclk));
+    ESP_ERROR_CHECK(i2s_set_clk(I2Schan, I2Sclk, I2S_BITS_PER_SAMPLE_16BIT, I2Smode));
+    ESP_LOGI(TAG, "CLK = %.1f kHz", i2s_get_clk(I2Schan)/1000);
+
+    
+
 }
-*/
 
 void init_uart(void)
 {
     const uart_config_t uart_config = {
-        .baud_rate = 115200,
+        .baud_rate = 460800,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -113,12 +119,29 @@ void init_uart(void)
     uart_set_pin(UART_NUM_1, UART_TX, UART_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
-int sendData(const char *data)
+void init_rmt(void)
+{
+    // init rmt
+    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(RMT_TX, RMT_CHANNEL_0);
+    // set counter clock to 40MHz
+    config.clk_div = 2;
+    ESP_ERROR_CHECK(rmt_config(&config));
+    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
+    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(1, (led_strip_dev_t)config.channel);
+    strip = led_strip_new_rmt_ws2812(&strip_config);
+    if (!strip) {
+        ESP_LOGE(TAG, "install WS2812 driver failed");
+    }
+    // Clear LED strip (turn off all LEDs)
+    ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
+    ESP_LOGI(TAG, "LED Inited");
+}
+
+int txData(const char *data, const int start, const int len)
 {
     static const char *TX_TAG = "TX";
     esp_log_level_set(TX_TAG, ESP_LOG_INFO);
-    const int len = strlen(data);
-    const int txBytes = uart_write_bytes(UART_NUM_1, data, len);
+    const int txBytes = uart_write_bytes(UART_NUM_1, data + start, len);
     ESP_LOGI(TX_TAG, "Wrote %d bytes", txBytes);
     return txBytes;
 }
@@ -151,50 +174,47 @@ void clear_color(led_strip_t *strip)
     ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
 }
 
+float filter_sum(void)
+{
+    ESP_LOGI(TAG, "Filter Start!");
+    float sum = 0.0;
+    float *copy = (float*) malloc(SAMPLE_SIZE * sizeof(float));
+    float b[11] = {0.0252,0.0599,0.0838,0.0639,0,-0.0639,-0.0838,-0.0599,-0.0252,-0.0053,0.0053};
+    float a[10] = {5.7936,17.8728,36.1887,52.8371,57.4592,47.1891,28.8647,12.7310,3.6853,0.5681};
+    for(uint8_t i = 0; i < 20 ; i++)
+        copy[i] = 0.0;
+    for(uint16_t i = 15; i < SAMPLE_SIZE ; i++)
+    {
+        copy[i] = b[10] * i2s_readraw_buff[i];
+        for(uint j = 0; j < 10 ; j++)
+            copy[i] += b[j] * i2s_readraw_buff[i-1-j] - a[j] * copy[i-1-j];
+        sum += abs(copy[i]) / (SAMPLE_SIZE-15);
+    }
+    ESP_LOGI(TAG, "Filter End!");
+    free(copy);
+    return sum;
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "PDM microphone recording Example start");
-    // Init
+
+    // Init 
+    init_rmt();
+    set_color(strip,SDU);
     init_i2s();
     init_uart();
-
-    // init rmt
-    rmt_config_t config = RMT_DEFAULT_CONFIG_TX(RMT_TX, RMT_CHANNEL_0);
-    // set counter clock to 40MHz
-    config.clk_div = 2;
-    ESP_ERROR_CHECK(rmt_config(&config));
-    ESP_ERROR_CHECK(rmt_driver_install(config.channel, 0, 0));
-    led_strip_config_t strip_config = LED_STRIP_DEFAULT_CONFIG(1, (led_strip_dev_t)config.channel);
-    led_strip_t *strip = led_strip_new_rmt_ws2812(&strip_config);
-    if (!strip) {
-        ESP_LOGE(TAG, "install WS2812 driver failed");
-    }
-    // Clear LED strip (turn off all LEDs)
-    ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
-    // Show simple rainbow chasing pattern
-    ESP_LOGI(TAG, "LED Rainbow Chase Start");
-
+    set_color(strip,RED);
     
     //char data[RX_BUF_SIZE];
-    uint8_t color[3][3] ={
-        { 255,   0, 0},//RED
-        { 255, 255, 0},//YELLOW
-        {   0, 255, 0}//GREEN
-        };
-    
-    // Start Recording
-    // Read the RAW samples from the microphone
-    ESP_LOGI(TAG, "CLK = %.1f kHz", i2s_get_clk(I2Schan)/1000);
-    i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
-    ESP_LOGI(TAG, "%d", i2s_readraw_buff[0]);
-    set_color(strip,RED);
-    // vTaskDelay(100/portTICK_RATE_MS);
     while (1)
     {
-        // i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 100);
         //rxData(data);
-        //sendData(data);
-        
+        //txData(data);
+        i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
+        ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
+        ESP_LOGI(TAG, "Avg = %.3f", filter_sum());
+        vTaskDelay(1000/portTICK_RATE_MS);
     }
     // Stop I2S driver and destroy
     ESP_ERROR_CHECK(i2s_driver_uninstall(I2Schan));

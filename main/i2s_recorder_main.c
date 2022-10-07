@@ -35,7 +35,7 @@
 #define BYTE_RATE (I2Sclk * (16 / 8)) * 2
 #define I2Schan 0
 #define I2Sclk 50*1000//160 * 1000
-#define I2Smode I2S_CHANNEL_MONO//I2S_CHANNEL_STEREO
+#define I2Smode I2S_CHANNEL_STEREO//I2S_CHANNEL_MONO
 #define RMT_TIMEOUT 10
 #define RED color[0]
 #define YELLOW color[1]
@@ -177,22 +177,37 @@ void clear_color(led_strip_t *strip)
 float filter_sum(void)
 {
     ESP_LOGI(TAG, "Filter Start!");
-    float sum = 0.0;
-    float *copy = (float*) malloc(SAMPLE_SIZE * sizeof(float));
-    float b[11] = {0.0252,0.0599,0.0838,0.0639,0,-0.0639,-0.0838,-0.0599,-0.0252,-0.0053,0.0053};
-    float a[10] = {5.7936,17.8728,36.1887,52.8371,57.4592,47.1891,28.8647,12.7310,3.6853,0.5681};
+    float sum[2] = { 0.0, 0.0 };
+    float *left = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
+    float *right = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
+    //滤波器差分方程参数
+    const float b[11] = {0.0560,0.1492,0.2241,0.1773,0,-0.1773,-0.2241,-0.1492,-0.0560,-0.0095,0.0095};
+    const float a[10] = {7.4397,26.1154,56.6605,83.9193,88.5296,67.3377,36.4799,13.4906,3.0838,0.3328};
+    //左右声道初始赋值
     for(uint8_t i = 0; i < 20 ; i++)
-        copy[i] = 0.0;
-    for(uint16_t i = 15; i < SAMPLE_SIZE ; i++)
     {
-        copy[i] = b[10] * i2s_readraw_buff[i];
+         left[i] = 0.0;
+        right[i] = 0.0;
+    }
+    for(uint16_t i = 10; i < SAMPLE_SIZE/2 ; i++)
+    {
+         left[i] = b[10] * i2s_readraw_buff[i*2];
+        right[i] = b[10] * i2s_readraw_buff[i*2+1];
         for(uint j = 0; j < 10 ; j++)
-            copy[i] += b[j] * i2s_readraw_buff[i-1-j] - a[j] * copy[i-1-j];
-        sum += abs(copy[i]) / (SAMPLE_SIZE-15);
+        {
+             left[i] += b[j] * i2s_readraw_buff[(i-1-j)*2] - a[j] * left[i-1-j];
+            right[i] += b[j] * i2s_readraw_buff[(i-1-j)*2+1] - a[j] * right[i-1-j];
+        }
+        sum[0] += abs(left[i]) / (SAMPLE_SIZE/2-10);
+        sum[1] += abs(right[i]) / (SAMPLE_SIZE/2-10);
+        //ESP_LOGI(TAG, "%.3f", copy[i]);
     }
     ESP_LOGI(TAG, "Filter End!");
-    free(copy);
-    return sum;
+    ESP_LOGI(TAG, "Avg Left  = %.3f",sum[0]);
+    ESP_LOGI(TAG, "Avg Right = %.3f",sum[1]);
+    free(left);
+    free(right);
+    return sum[0] - sum[1];
 }
 
 void app_main(void)
@@ -206,14 +221,22 @@ void app_main(void)
     init_uart();
     set_color(strip,RED);
     
+
+    i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
+    for(int i =0;i<100;i++)
+        ESP_LOGI(TAG, "%hu", i2s_readraw_buff[i]);
+    i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
+    ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
     //char data[RX_BUF_SIZE];
     while (1)
     {
         //rxData(data);
         //txData(data);
         i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
+        i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
         ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
-        ESP_LOGI(TAG, "Avg = %.3f", filter_sum());
+        //ESP_LOGI(TAG, "%hu", i2s_readraw_buff[1]);
+        ESP_LOGI(TAG, "Delta = %.3f", filter_sum());
         vTaskDelay(1000/portTICK_RATE_MS);
     }
     // Stop I2S driver and destroy

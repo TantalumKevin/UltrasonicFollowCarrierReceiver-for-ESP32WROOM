@@ -41,6 +41,7 @@
 #define YELLOW color[1]
 #define GREEN color[2]
 #define SDU color[3]
+#define FILTER_ORDER 8
 
 static const char *TAG = "UltraSonicFollowReceiver-ESP32";
 static const int RX_BUF_SIZE = 1024;
@@ -181,25 +182,25 @@ float filter_sum(void)
     float *left = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     float *right = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     //滤波器差分方程参数
-    const float b[11] = {0.0560,0.1492,0.2241,0.1773,0,-0.1773,-0.2241,-0.1492,-0.0560,-0.0095,0.0095};
-    const float a[10] = {7.4397,26.1154,56.6605,83.9193,88.5296,67.3377,36.4799,13.4906,3.0838,0.3328};
+    float b[FILTER_ORDER+1] = {0.0556,0.1503,0.2578,0.3064,0.2578,0.1503,0.0556,0.0101,0.0556};
+    float a[FILTER_ORDER] = {5.8722,16.4355,28.1077,31.9720,24.7116,12.7036,3.9904,0.5975};
     //左右声道初始赋值
-    for(uint8_t i = 0; i < 20 ; i++)
+    for(uint8_t i = 0; i < FILTER_ORDER*4 ; i++)
     {
          left[i] = 0.0;
         right[i] = 0.0;
     }
-    for(uint16_t i = 10; i < SAMPLE_SIZE/2 ; i++)
+    for(uint16_t i = FILTER_ORDER*2; i < SAMPLE_SIZE/2 ; i++)
     {
-         left[i] = b[10] * i2s_readraw_buff[i*2];
-        right[i] = b[10] * i2s_readraw_buff[i*2+1];
-        for(uint j = 0; j < 10 ; j++)
+         left[i] = b[FILTER_ORDER] * i2s_readraw_buff[i*2];
+        right[i] = b[FILTER_ORDER] * i2s_readraw_buff[i*2+1];
+        for(uint j = 0; j < FILTER_ORDER ; j++)
         {
              left[i] += b[j] * i2s_readraw_buff[(i-1-j)*2] - a[j] * left[i-1-j];
             right[i] += b[j] * i2s_readraw_buff[(i-1-j)*2+1] - a[j] * right[i-1-j];
         }
-        sum[0] += abs(left[i]) / (SAMPLE_SIZE/2-10);
-        sum[1] += abs(right[i]) / (SAMPLE_SIZE/2-10);
+        sum[0] += abs(left[i]) / ((SAMPLE_SIZE/2)-(FILTER_ORDER*2));
+        sum[1] += abs(right[i]) / ((SAMPLE_SIZE/2)-(FILTER_ORDER*2));
         //ESP_LOGI(TAG, "%.3f", copy[i]);
     }
     ESP_LOGI(TAG, "Filter End!");

@@ -3,5 +3,5 @@
 # project subdirectory.
 #
 VERBOSE = 1
-PROJECT_NAME := esp32-i2s-recorder-example
+PROJECT_NAME := ultra-sonic-follow-receiver-esp32
 include $(IDF_PATH)/make/project.mk

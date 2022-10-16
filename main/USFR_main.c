@@ -42,6 +42,7 @@
 #define GREEN color[2]
 #define SDU color[3]
 #define FILTER_ORDER 8
+#define BRIGHTNESS 0.6
 
 static const char *TAG = "UltraSonicFollowReceiver-ESP32";
 static const int RX_BUF_SIZE = 1024;
@@ -49,10 +50,10 @@ static int16_t i2s_readraw_buff[SAMPLE_SIZE];
 static led_strip_t *strip;
 size_t bytes_read;
 uint8_t color[4][3] ={
-    { 255,   0,  0},//RED
-    { 255, 255,  0},//YELLOW
-    {   0, 255,  0},//GREEN
-    { 156,  12, 19}//SDU-RED
+    {BRIGHTNESS*255,BRIGHTNESS*0,BRIGHTNESS*0},//RED
+    {BRIGHTNESS*255,BRIGHTNESS*255,BRIGHTNESS*0},//YELLOW
+    {BRIGHTNESS*0,BRIGHTNESS*255,BRIGHTNESS*0},//GREEN
+    {BRIGHTNESS*156,BRIGHTNESS*12,BRIGHTNESS*19}//SDU-RED
     };
 
 void init_i2s()
@@ -175,10 +176,10 @@ void clear_color(led_strip_t *strip)
     ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
 }
 
-float filter_sum(void)
+double filter_sum(void)
 {
     ESP_LOGI(TAG, "Filter Start!");
-    float sum[2] = { 0.0, 0.0 };
+    uint32_t sum[2] = { 0, 0 };
     float *left = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     float *right = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     //滤波器差分方程参数
@@ -199,16 +200,18 @@ float filter_sum(void)
              left[i] += b[j] * i2s_readraw_buff[(i-1-j)*2] - a[j] * left[i-1-j];
             right[i] += b[j] * i2s_readraw_buff[(i-1-j)*2+1] - a[j] * right[i-1-j];
         }
-        sum[0] += abs(left[i]) / ((SAMPLE_SIZE/2)-(FILTER_ORDER*2));
-        sum[1] += abs(right[i]) / ((SAMPLE_SIZE/2)-(FILTER_ORDER*2));
+        sum[0] += (uint32_t) abs(left[i]);
+        sum[1] += (uint32_t) abs(right[i]);
         //ESP_LOGI(TAG, "%.3f", copy[i]);
     }
     ESP_LOGI(TAG, "Filter End!");
-    ESP_LOGI(TAG, "Avg Left  = %.3f",sum[0]);
-    ESP_LOGI(TAG, "Avg Right = %.3f",sum[1]);
+    sum[0] /= SAMPLE_SIZE/2 - FILTER_ORDER*2;
+    sum[1] /= SAMPLE_SIZE/2 - FILTER_ORDER*2;
+    ESP_LOGI(TAG, "Avg Left  = %u",sum[0]);
+    ESP_LOGI(TAG, "Avg Right = %u",sum[1]);
     free(left);
     free(right);
-    return sum[0] - sum[1];
+    return ((double)sum[0]) - ((double)sum[1]);
 }
 
 void app_main(void)

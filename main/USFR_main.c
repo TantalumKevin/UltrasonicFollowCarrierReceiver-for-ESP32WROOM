@@ -41,21 +41,30 @@
 #define YELLOW color[1]
 #define GREEN color[2]
 #define SDU color[3]
+#define BLUE color[4]
+#define PINK color[5]
+#define PURPLE color[6]
 #define FILTER_ORDER 8
 #define BRIGHTNESS 0.6
+#define RX_BUF_SIZE 1024
+#define TX_BUF_SIZE 16
 
 static const char *TAG = "UltraSonicFollowReceiver-ESP32";
-static const int RX_BUF_SIZE = 1024;
 static int16_t i2s_readraw_buff[SAMPLE_SIZE];
 static led_strip_t *strip;
 size_t bytes_read;
 static uint32_t sum[2] = { 0, 0 };
+static char recv[RX_BUF_SIZE];
+static char send[TX_BUF_SIZE];
 
-uint8_t color[4][3] ={
+uint8_t color[7][3] ={
     {BRIGHTNESS*255,BRIGHTNESS*0,BRIGHTNESS*0},//RED
     {BRIGHTNESS*255,BRIGHTNESS*255,BRIGHTNESS*0},//YELLOW
     {BRIGHTNESS*0,BRIGHTNESS*255,BRIGHTNESS*0},//GREEN
-    {BRIGHTNESS*156,BRIGHTNESS*12,BRIGHTNESS*19}//SDU-RED
+    {BRIGHTNESS*156,BRIGHTNESS*12,BRIGHTNESS*19},//SDU-RED
+    {BRIGHTNESS*0,BRIGHTNESS*0,BRIGHTNESS*255},//BLUE
+    {BRIGHTNESS*255,BRIGHTNESS*192,BRIGHTNESS*203},//PINK
+    {BRIGHTNESS*128,BRIGHTNESS*0,BRIGHTNESS*128}//PURPLE
     };
 
 void init_i2s()
@@ -220,30 +229,107 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "PDM microphone recording Example start");
 
-    // Init 
+    // 外设初始化
     init_rmt();
+    //外设初始化中，置山大红灯
     set_color(strip,SDU);
     init_i2s();
     init_uart();
+    //外设初始化完成，等待建立连接，置红灯
     set_color(strip,RED);
     
-
+    //先读取一次，可以有效略过一部分失真数据
     i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
-    for(int i =0;i<100;i++)
-        ESP_LOGI(TAG, "%hu", i2s_readraw_buff[i]);
-    i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
-    ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
-    //char data[RX_BUF_SIZE];
+    //等待与上位机建立通信连接
     while (1)
     {
-        //rxData(data);
-        //txData(data);
+        rxData(recv);
+        if( !strcmp("shelloe",recv) )
+            break;
+        vTaskDelay(1/portTICK_RATE_MS);
+    }
+    txData(recv,0,7);
+    //连接建立，置黄灯
+    set_color(strip,YELLOW);
+    vTaskDelay(10/portTICK_RATE_MS);
+    txData("steste",0,6);
+    while (1)
+    {
+        rxData(recv);
+        if( recv[0] == 's' && recv[2] =='e' )
+        {
+            if( recv[1] == '0' )
+                break;
+            else
+                //上位机自检报错，置蓝灯
+                set_color(strip,BLUE);
+        }
+        vTaskDelay(1/portTICK_RATE_MS);
+    }
+    //上位机自检完成，置粉灯
+    set_color(strip,PINK);
+
+    //跟随值标定
+    uint16_t *count = (uint16_t*) malloc(sizeof(uint16_t));
+    uint32_t *standard = (uint32_t*) malloc(sizeof(uint32_t));
+    *count = 0;
+    *standard = 0;
+    while(1)
+    {
+        if( *count>=500 )
+            break;
         i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
+        filter_sum();
+        if (sum[0]<200 || sum[1]<200)
+        {
+            //声波信号丢失，置紫灯
+            set_color(strip,PURPLE);
+            if(*count != 0)
+            {
+                *count = 0;
+                *standard = 0;
+            }
+            continue;
+        }
+        set_color(strip,PINK);
+        (*standard) += sum[0]+sum[1];
+        (*count)++;
+    }
+    free(count);
+    *standard /= 1000;
+    sprintf(send,"s%ue",*standard);
+    txData(send,0,16);
+    free(standard);
+
+    //标定完成，进入跟随模式，置绿灯
+    set_color(strip,GREEN);
+    //申请声波丢失裕度
+    uint16_t *margin = (uint16_t*) malloc(sizeof(uint16_t));
+    *margin = 1000;
+    while (1)
+    {
         i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
-        ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
+        //ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
         //ESP_LOGI(TAG, "%hu", i2s_readraw_buff[1]);
         filter_sum();
-        ESP_LOGI(TAG, "Delta = %d", (int32_t)sum[0]-sum[1]);
+        //ESP_LOGI(TAG, "Delta = %d", (int32_t)sum[0]-sum[1]);
+        if (sum[0]<200 || sum[1]<200)
+        {
+            //声波信号丢失，置紫灯
+            set_color(strip,PURPLE);
+            (*margin)--;
+            continue;
+        }
+        if(*margin == 0)
+        {
+            txData("sreboote",0,16);
+            esp_restart();
+        }
+        set_color(strip,GREEN);
+        sprintf(send,"s%ue",sum[0]);
+        txData(send,0,16);
+        sprintf(send,"s%ue",sum[1]);
+        txData(send,0,16);
         vTaskDelay(1000/portTICK_RATE_MS);
     }
     // Stop I2S driver and destroy

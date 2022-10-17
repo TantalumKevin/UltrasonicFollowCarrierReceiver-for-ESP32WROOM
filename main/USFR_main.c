@@ -49,6 +49,8 @@ static const int RX_BUF_SIZE = 1024;
 static int16_t i2s_readraw_buff[SAMPLE_SIZE];
 static led_strip_t *strip;
 size_t bytes_read;
+static uint32_t sum[2] = { 0, 0 };
+
 uint8_t color[4][3] ={
     {BRIGHTNESS*255,BRIGHTNESS*0,BRIGHTNESS*0},//RED
     {BRIGHTNESS*255,BRIGHTNESS*255,BRIGHTNESS*0},//YELLOW
@@ -176,10 +178,11 @@ void clear_color(led_strip_t *strip)
     ESP_ERROR_CHECK(strip->clear(strip, RMT_TIMEOUT));
 }
 
-double filter_sum(void)
+void filter_sum(void)
 {
     ESP_LOGI(TAG, "Filter Start!");
-    uint32_t sum[2] = { 0, 0 };
+    sum[0] = 0;
+    sum[1] = 0;
     float *left = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     float *right = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     //滤波器差分方程参数
@@ -211,7 +214,6 @@ double filter_sum(void)
     ESP_LOGI(TAG, "Avg Right = %u",sum[1]);
     free(left);
     free(right);
-    return ((double)sum[0]) - ((double)sum[1]);
 }
 
 void app_main(void)
@@ -240,7 +242,8 @@ void app_main(void)
         i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
         ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
         //ESP_LOGI(TAG, "%hu", i2s_readraw_buff[1]);
-        ESP_LOGI(TAG, "Delta = %.3f", filter_sum());
+        filter_sum();
+        ESP_LOGI(TAG, "Delta = %d", (int32_t)sum[0]-sum[1]);
         vTaskDelay(1000/portTICK_RATE_MS);
     }
     // Stop I2S driver and destroy

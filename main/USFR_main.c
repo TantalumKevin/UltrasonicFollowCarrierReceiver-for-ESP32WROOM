@@ -189,13 +189,13 @@ void clear_color(led_strip_t *strip)
 
 void filter_sum(void)
 {
-    ESP_LOGI(TAG, "Filter Start!");
+    //ESP_LOGI(TAG, "Filter Start!");
     sum[0] = 0;
     sum[1] = 0;
     float *left = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     float *right = (float*) malloc(SAMPLE_SIZE * sizeof(float)/2);
     //滤波器差分方程参数
-    float b[FILTER_ORDER+1] = {0.0556,0.1503,0.2578,0.3064,0.2578,0.1503,0.0556,0.0101,0.0556};
+    float b[FILTER_ORDER+1] = {0.0556,0.1503,0.2578,0.3064,0.2578,0.1503,0.0556,0.0101,0.0101};
     float a[FILTER_ORDER] = {5.8722,16.4355,28.1077,31.9720,24.7116,12.7036,3.9904,0.5975};
     //左右声道初始赋值
     for(uint8_t i = 0; i < FILTER_ORDER*4 ; i++)
@@ -216,7 +216,7 @@ void filter_sum(void)
         sum[1] += (uint32_t) abs(right[i]);
         //ESP_LOGI(TAG, "%.3f", copy[i]);
     }
-    ESP_LOGI(TAG, "Filter End!");
+    //ESP_LOGI(TAG, "Filter End!");
     sum[0] /= SAMPLE_SIZE/2 - FILTER_ORDER*2;
     sum[1] /= SAMPLE_SIZE/2 - FILTER_ORDER*2;
     ESP_LOGI(TAG, "Avg Left  = %u",sum[0]);
@@ -227,8 +227,6 @@ void filter_sum(void)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "PDM microphone recording Example start");
-
     // 外设初始化
     init_rmt();
     //外设初始化中，置山大红灯
@@ -274,13 +272,15 @@ void app_main(void)
     uint32_t *standard = (uint32_t*) malloc(sizeof(uint32_t));
     *count = 0;
     *standard = 0;
+    ESP_LOGI(TAG, "Calibration Start!");
     while(1)
     {
-        if( *count>=500 )
+        if( *count>=100 )
             break;
         i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
         filter_sum();
-        if (sum[0]<200 || sum[1]<200)
+        //ESP_LOGI(TAG, "Processing!");
+        if (sum[0]<100 || sum[1]<100)
         {
             //声波信号丢失，置紫灯
             set_color(strip,PURPLE);
@@ -289,12 +289,15 @@ void app_main(void)
                 *count = 0;
                 *standard = 0;
             }
+            ESP_LOGI(TAG, "Can not found Sonic!");
             continue;
         }
         set_color(strip,PINK);
         (*standard) += sum[0]+sum[1];
         (*count)++;
+        ESP_LOGI(TAG, "Recoding %d!",*count);
     }
+    ESP_LOGI(TAG, "Calibration End!");
     free(count);
     *standard /= 1000;
     sprintf(send,"s%ue",*standard);
@@ -305,32 +308,35 @@ void app_main(void)
     set_color(strip,GREEN);
     //申请声波丢失裕度
     uint16_t *margin = (uint16_t*) malloc(sizeof(uint16_t));
-    *margin = 1000;
+    *margin = 300;
     while (1)
     {
+        ESP_LOGI(TAG, "Margin = %u", *margin);
         i2s_read(I2Schan, (char *)i2s_readraw_buff, SAMPLE_SIZE, &bytes_read, 20);
         //ESP_LOGI(TAG, "Read %d bytes", (int)bytes_read);
         //ESP_LOGI(TAG, "%hu", i2s_readraw_buff[1]);
         filter_sum();
         //ESP_LOGI(TAG, "Delta = %d", (int32_t)sum[0]-sum[1]);
-        if (sum[0]<200 || sum[1]<200)
+        if(*margin == 0)
+        {
+            txData("sreboote",0,16);
+            esp_restart();
+        }
+        if (sum[0]<100 && sum[1]<100)
         {
             //声波信号丢失，置紫灯
             set_color(strip,PURPLE);
             (*margin)--;
             continue;
         }
-        if(*margin == 0)
-        {
-            txData("sreboote",0,16);
-            esp_restart();
-        }
+        else if(*margin != 300)
+            (*margin) ++;
         set_color(strip,GREEN);
         sprintf(send,"s%ue",sum[0]);
         txData(send,0,16);
         sprintf(send,"s%ue",sum[1]);
         txData(send,0,16);
-        vTaskDelay(1000/portTICK_RATE_MS);
+        //vTaskDelay(1/portTICK_RATE_MS);
     }
     // Stop I2S driver and destroy
     ESP_ERROR_CHECK(i2s_driver_uninstall(I2Schan));

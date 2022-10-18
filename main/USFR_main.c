@@ -155,7 +155,7 @@ int txData(const char *data, const int start, const int len)
     static const char *TX_TAG = "TX";
     esp_log_level_set(TX_TAG, ESP_LOG_INFO);
     const int txBytes = uart_write_bytes(UART_NUM_1, data + start, len);
-    ESP_LOGI(TX_TAG, "Wrote %d bytes", txBytes);
+    ESP_LOGI(TX_TAG, "Wrote %d bytes", txBytes);vTaskDelay(50/portTICK_RATE_MS);
     return txBytes;
 }
 
@@ -299,11 +299,11 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "Calibration End!");
     free(count);
-    *standard /= 1000;
+    *standard /= 200;
     sprintf(send,"s%ue",*standard);
     txData(send,0,16);
     free(standard);
-
+    vTaskDelay(500/portTICK_RATE_MS);
     //标定完成，进入跟随模式，置绿灯
     set_color(strip,GREEN);
     //申请声波丢失裕度
@@ -332,9 +332,7 @@ void app_main(void)
         else if(*margin != 300)
             (*margin) ++;
         set_color(strip,GREEN);
-        sprintf(send,"s%ue",sum[0]);
-        txData(send,0,16);
-        sprintf(send,"s%ue",sum[1]);
+        sprintf(send,"sl%ur%ue",sum[0],sum[1]);
         txData(send,0,16);
         //vTaskDelay(1/portTICK_RATE_MS);
     }
